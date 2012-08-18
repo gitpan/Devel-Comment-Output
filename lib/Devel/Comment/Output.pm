@@ -5,7 +5,7 @@ use 5.008_001;
 use Symbol ();
 use Scalar::Util qw(refaddr);
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 our $Prefix = $ENV{DEVEL_COMMENT_OUTPUT_PREFIX} || '=> ';
 our %Instances;
@@ -19,6 +19,7 @@ sub import {
         handle => \*STDOUT,
         file   => $file,
         prefix => $Prefix,
+        inline => 1,
         %args,
     );
     $self->setup;
@@ -54,6 +55,7 @@ sub write {
     my $self = shift;
     my $class = ref $self;
 
+    local *{$self->{handle}};
     local $/ = "\n";
 
     my @in = do {
@@ -66,7 +68,7 @@ sub write {
         $in[$i] =~ s/^(use \Q$class\E\b)/# $1/;
 
         my @results = split /\n/, join '', @{ $self->{results}->{$i+1} || [] };
-        if (@results == 1) {
+        if (@results == 1 && $self->{inline}) {
             $in[$i] =~ s/$/ # $self->{prefix}$results[0]/;
             push @out, $in[$i];
         } else {
@@ -91,15 +93,21 @@ use Tie::Handle;
 use parent -norequire => 'Tie::StdHandle';
 
 sub PRINT {
-    my $self = shift;
+    my ($self, @args) = @_;
+
+    no warnings;
 
     my $dco = Devel::Comment::Output->from_handle($self);
-    print { $dco->{original_handle} } @_;
+    print { $dco->{original_handle} } @args;
+
+    foreach (@args) {
+        utf8::encode($_) if utf8::is_utf8($_);
+    }
 
     my $depth = 0;
     while (my ($pkg, $file, $line) = caller($depth++)) {
         if ($file eq $dco->{file}) {
-            push @{ $dco->{results}->{$line} ||= [] }, @_;
+            push @{ $dco->{results}->{$line} ||= [] }, @args;
             return;
         }
     }
@@ -155,6 +163,7 @@ is equivalent to below:
   use Devel::Comment::Output (
       handle => \*STDOUT, # Handle to capture
       file => __FILE__,   # File to rewrite
+      inline => 1,        # Allow inline comment
       prefix => '=> '     # Inline comment prefix
   );
 
